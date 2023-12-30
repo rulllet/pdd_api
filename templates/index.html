@@ -1,0 +1,14 @@
+<html>
+	<h1>
+		{{ .title }}
+	</h1>
+	<ul>
+		{{range .todos}}
+			{{if .Done}}
+				<li class="done"><a href={{.Title}}>{{.Title}}</a> !!!</li>
+			{{else}}
+				<li><a href={{.Title}}>{{.Title}}</a></li>
+			{{end}}
+		{{end}}
+	</ul>
+</html>

@@ -69,3 +69,45 @@ func (q *Queries) GetQuestion(ctx context.Context, arg GetQuestionParams) (Quest
 	)
 	return i, err
 }
+
+const getTicket = `-- name: GetTicket :many
+SELECT id, ticket, number, title, help, image, category_id
+FROM question
+WHERE category_id = ? AND ticket = ?
+`
+
+type GetTicketParams struct {
+	CategoryID string `json:"category_id"`
+	Ticket     int64  `json:"ticket"`
+}
+
+func (q *Queries) GetTicket(ctx context.Context, arg GetTicketParams) ([]Question, error) {
+	rows, err := q.db.QueryContext(ctx, getTicket, arg.CategoryID, arg.Ticket)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Question
+	for rows.Next() {
+		var i Question
+		if err := rows.Scan(
+			&i.ID,
+			&i.Ticket,
+			&i.Number,
+			&i.Title,
+			&i.Help,
+			&i.Image,
+			&i.CategoryID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

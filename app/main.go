@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
@@ -12,7 +13,6 @@ import (
 	"goApi/servicePdd"
 
 	"github.com/gin-contrib/gzip"
-	"github.com/gin-contrib/static"
 	"github.com/gin-contrib/timeout"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -20,6 +20,87 @@ import (
 )
 
 var database *data.Queries
+
+type ResponseQuestion struct {
+	Question data.Question `json:"question"`
+	Answers  []data.Answer `json:"answers"`
+}
+
+type Todo struct {
+	Title string
+	Done  bool
+}
+
+type TodoPageData struct {
+	PageTitle string
+	Todos     []Todo
+}
+
+func main() {
+	port := os.Getenv("PORT")
+	dbName := os.Getenv("NAME")
+	timeout := Convert64(os.Getenv("TIMEOUT"))
+	database = databaseInit(dbName)
+
+	//gin.SetMode(gin.ReleaseMode)
+	r := gin.Default()
+	r.Use(gzip.Gzip(gzip.DefaultCompression))
+	r.Use(timeoutMiddleware(timeout))
+	r.StaticFile("/favicon.ico", "../static/favicon.ico")
+	r.StaticFS("/static", http.Dir("../static"))
+	r.LoadHTMLGlob("../templates/*")
+	index := r.Group("/")
+	{
+		index.GET("/", func(c *gin.Context) {
+			data := TodoPageData{
+				PageTitle: "URL list",
+				Todos: []Todo{
+					{Title: "http://localhost:8080/api/questions/?&ticket=1&question=1", Done: false},
+					{Title: "http://localhost:8080/api/questions/random?category=AB", Done: true},
+					{Title: "http://localhost:8080/api/questions/random?category=CD", Done: true},
+				},
+			}
+			c.HTML(http.StatusOK, "index.html", gin.H{
+				"title": data.PageTitle,
+				"todos": data.Todos,
+			})
+		})
+	}
+	api := r.Group("/api")
+	{
+		questions := api.Group("/questions")
+		questions.GET("/", func(ctx *gin.Context) {
+			category := ctx.DefaultQuery("category", "AB")
+			ticket := Convert64(ctx.Query("ticket"))
+			question := Convert64(ctx.Query("question"))
+			res := getDataQuestion(category, ticket, question, ctx)
+			ctx.IndentedJSON(http.StatusOK, gin.H{"data": res})
+		})
+		questions.GET("/random", func(ctx *gin.Context) {
+			category := ctx.DefaultQuery("category", "AB")
+			res := getDataQuestion(category, rand.Int63n(40), rand.Int63n(20), ctx)
+			ctx.IndentedJSON(http.StatusOK, gin.H{"data": res})
+		})
+		questions.GET("/next", getNextQuestion)
+		tickets := api.Group("/tickets")
+		tickets.GET("/", func(ctx *gin.Context) {
+			category := ctx.DefaultQuery("category", "AB")
+			ticket := Convert64(ctx.Query("ticket"))
+			ticketData, err := database.GetTicket(ctx, data.GetTicketParams{
+				CategoryID: category,
+				Ticket:     ticket,
+			})
+			if err != nil {
+				panic(err)
+			}
+			ctx.IndentedJSON(http.StatusOK, gin.H{"data": ticketData})
+		})
+
+	}
+	if err := r.Run(port); err != nil {
+		log.Fatal(err)
+	}
+}
 
 func init() {
 	if err := godotenv.Load("../.env"); err != nil {
@@ -36,24 +117,8 @@ func databaseInit(dbName string) *data.Queries {
 	return queries
 }
 
-func routerInit(r *gin.Engine) *gin.Engine {
-	r.StaticFile("/favicon.ico", "../static/favicon.ico")
-	api := r.Group("/api")
-	{
-		//api.StaticFS("/static", http.Dir("../static"))
-		api.GET("/", getDataQuestion)
-		api.GET("/next", getNextQuestion)
-	}
-	r.GET("/ping", func(ctx *gin.Context) {
-		ctx.JSON(http.StatusOK, gin.H{"message": "pong"})
-	})
-	return r
-}
-
-func getDataQuestion(c *gin.Context) {
-	category := c.DefaultQuery("category", "AB")
-	ticket := Convert64(c.Query("ticket"))
-	question := Convert64(c.Query("question"))
+func getDataQuestion(category string, ticket int64, question int64, c *gin.Context) *ResponseQuestion {
+	var questionData data.Question
 	questionData, err := database.GetQuestion(c, data.GetQuestionParams{
 		CategoryID: category,
 		Ticket:     ticket,
@@ -62,12 +127,13 @@ func getDataQuestion(c *gin.Context) {
 	if err != nil {
 		panic(err)
 	}
-
-	answerData, err := database.GetAnswers(c, strconv.FormatInt(questionData.ID, 10))
+	var answerData []data.Answer
+	answerData, err = database.GetAnswers(c, strconv.FormatInt(questionData.ID, 10))
 	if err != nil {
 		panic(err)
 	}
-	c.IndentedJSON(http.StatusOK, gin.H{"question": questionData, "answers": answerData})
+	res := ResponseQuestion{Question: questionData, Answers: answerData}
+	return &res
 }
 
 func getNextQuestion(c *gin.Context) {
@@ -110,20 +176,4 @@ func timeoutMiddleware(timing int64) gin.HandlerFunc {
 		}),
 		timeout.WithResponse(timeoutResponse),
 	)
-}
-
-func main() {
-	port := os.Getenv("PORT")
-	dbName := os.Getenv("NAME")
-	timeout := Convert64(os.Getenv("TIMEOUT"))
-
-	database = databaseInit(dbName)
-	r := gin.Default()
-	r.Use(gzip.Gzip(gzip.DefaultCompression))
-	r.Use(timeoutMiddleware(timeout))
-	r.Use(static.Serve("/static", static.LocalFile("../static", true)))
-	router := routerInit(r)
-	if err := router.Run(port); err != nil {
-		log.Fatal(err)
-	}
 }

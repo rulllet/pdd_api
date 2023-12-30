@@ -7,3 +7,8 @@ WHERE category_id = ? AND ticket = ? AND number = ?;
 SELECT *
 FROM answer
 WHERE question_id = ?;
+
+-- name: GetTicket :many
+SELECT *
+FROM question
+WHERE category_id = ? AND ticket = ?
